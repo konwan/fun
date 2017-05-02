@@ -64,7 +64,7 @@ class Pir(object):
 
 
 
-    def __init__(self, pir_col, pir, zone_col, zone, mode="overall", handmade=True):
+    def __init__(self, pir_col, pir, zone_col, zone, mode="overall", handmade=True, logdate=None):
         self.mode = mode # (overall, day, hour)
         self.handmade = handmade
         self.pic_path = ""
@@ -93,8 +93,10 @@ class Pir(object):
         elif self.mode == "day":
             self.tmp = self.df_pir_cal.groupby(['apid','logdate','zoneid','x','y','jpg'], as_index=False).agg({'cnt': np.sum})
             # self.data = self.tmp.query("logdate == '{}'".format("2017-04-03")).sort_values(by=["cnt"], ascending=[0])
-        else:
+        elif self.mode == "hour":
             self.tmp = self.df_pir_cal.groupby(['apid','logdate','hour','zoneid','x','y','jpg'], as_index=False).agg({'cnt': np.sum})
+        else:
+             self.tmp = self.df_pir_cal.groupby(['apid','logdate','hour','min_lvl','zoneid','x','y','jpg'], as_index=False).agg({'cnt': np.sum})
 
     def extraZoneData(self):
         # if need to update x,y by handmade
@@ -103,7 +105,7 @@ class Pir(object):
         layoutdata = layout[["apid", "device", "x", "y", "jpg"]]
         new_layout = pd.merge(self.df_zone, layoutdata, how='left', on=["apid","device"])
         # new_layout = pd.merge(self.df_zone, layoutdata, how='left', left_on=["apid","device"], right_on=["apid","device"])
-        data = new_layout[new_layout['jpg'].notnull() & (new_layout['x_x'] != 0) & (new_layout['x_x'].notnull())][["apid","device","zoneid","zonename","x_y","y_y","jpg"]]
+        data = new_layout[new_layout['jpg'].notnull() & (new_layout['x_y'] != 0) & (new_layout['x_y'].notnull())][["apid","device","zoneid","zonename","x_y","y_y","jpg"]]
         data.columns = ["apid","device","zoneid","zonename","x","y","jpg"]
         return data
 
@@ -118,23 +120,29 @@ class Pir(object):
             y = i[4]
             cnt = i[6]
             zoneid = i[2]
-        else:
+        elif self.mode == "hour":
             x = i[4]
             y = i[5]
             cnt = i[7]
             zoneid = i[3]
+        else :
+            x, y, cnt, zoneid = i[5], i[6], i[8], i[4]
         return (x, y, zoneid, cnt)
 
-    def draw_pir_layout(self):
+    def draw_pir_layout(self, drawtype="flex"):
+        # flex order by cnt; fix order by zoneid
         tmp_path = "{}/{}".format(self.layout_path, self.data.jpg.unique()[0])
         logdate = (self.data.logdate.unique()[0] if 'logdate' in self.data.columns else time.strftime("%Y-%m-%d"))
         hour = ("_{}".format(self.data.hour.unique()[0]) if 'hour' in self.data.columns else "")
+        min_lvl = ("_{}".format(self.data.min_lvl.unique()[0]) if 'min_lvl' in self.data.columns else "")
+        total = 0
         r = 80
         layout = Image.open(tmp_path)
         font = ImageFont.truetype(self.font_path, self.font_size)
         draw = ImageDraw.Draw(layout, 'RGBA')
         draw.ink = 0*255*256 + 0*255*256 + 0*256*256
-        draw.text((layout.size[0]-4*r, 50), "{}".format(self.mode), font=font, fill='green')
+        # get the 8th cnt
+        basic = self.data[self.data['zoneid']=='8'].cnt
 
         for num, i in enumerate(self.data.values):
             if num < len(self.colorspool):
@@ -143,11 +151,16 @@ class Pir(object):
                 num = self.colorspool[len(self.colorspool)-1]
             (x, y, zoneid, cnt) = self.getZonedata(i)
 
-            draw.text((x-r/2, y-r/5), str(cnt), font=font, fill='red')
-            # draw.ellipse((x-r, y-r, x+r, y+r), fill=self.colorspool[str(num)], outline = "white")
-            draw.ellipse((x-r, y-r, x+r-num*8, y+r-num*8), fill=self.colorspool[str(num)], outline = "white")
 
-        layout.save("{}/{}_{}{}.jpg".format(self.save_path, self.mode, logdate, hour))
+            total += cnt
+            draw.text((x-r/2, y-r/5), str(cnt), font=font, fill='red')
+            if drawtype == "fix":
+                draw.ellipse((x-r, y-r, x+r-(basic-cnt)*8, y+r-(basic-cnt)*8), fill=self.colorspool[str(int(zoneid)+1)], outline = "white")
+            else:
+                draw.ellipse((x-r, y-r, x+r-num*8, y+r-num*8), fill=self.colorspool[str(int(zoneid)+1)], outline = "white")
+                # draw.ellipse((x-r, y-r, x+r-num*8, y+r-num*8), fill=self.colorspool[str(num)], outline = "white")
+        draw.text((layout.size[0]-4*r, 50), "{} - ({})".format(self.mode, total), font=font, fill='green')
+        layout.save("{}/{}_{}{}{}.jpg".format(self.save_path, self.mode, logdate, hour, min_lvl))
         del draw
         layout.close()
 
@@ -223,10 +236,14 @@ class WiFi(object):
             plt.scatter(self.tmp.index.get_loc(min_row.name), min_row.long, 1000, color =tmpcolor, alpha=0.2)
 
 if __name__ == "__main__":
+    apid = "WSTW0004"
+    jpg = "ws4.jpg"
     mode = "pir"
-    prj_name = 'gomi-dev'
+    prj_name = "gomi-dev"
+    type="minlvl"
+    drawtype="flex"
     dataset_name = ('cindy_iot' if mode == "wifi" else "iot")
-    table_name = ('wifi_day' if mode == "wifi" else 'pir_new')
+    table_name = ('wifi_day' if mode == "wifi" else ('pir_new' if type!='minlvl' else 'pir_new_minlvl'))
     tb_zone = 'tw_IoT_StoreZone_Mapping'
 
     # source_file_name = "/Users/data/Desktop/cindy/weather/up/history/history_20170215.csv"
@@ -256,9 +273,21 @@ if __name__ == "__main__":
         #     pir_day.data = pir_day.tmp.query("logdate == '{}'".format(i)).sort_values(by=["cnt"], ascending=[0])
         #     pir_day.draw_pir_layout()
 
-        pir_hour = Pir(pir_col, pir, zone_col, zone, mode="hour")
-        # for i in pir_hour.tmp.logdate.unique():
-        tmpdata = pir_hour.tmp.query("logdate == '{}' ".format("2017-04-26"))
-        for j in tmpdata.hour.unique():
-            pir_hour.data = tmpdata.query("hour == {} ".format(j)).sort_values(by=["cnt"], ascending=[0])
-            pir_hour.draw_pir_layout()
+        # pir_hour = Pir(pir_col, pir, zone_col, zone, mode="hour")
+        # # for i in pir_hour.tmp.logdate.unique():
+        # tmpdata = pir_hour.tmp.query("logdate == '{}' ".format("2017-04-03"))
+        # for j in tmpdata.hour.unique():
+        #     pir_hour.data = tmpdata.query("hour == {} ".format(j)).sort_values(by=["cnt"], ascending=[0])
+        #     pir_hour.draw_pir_layout()
+
+        pir_minlvl = Pir(pir_col, pir, zone_col, zone, mode="minlvl")
+        # for i in pir_minlvl.tmp.logdate.unique():
+        #     for j in pir_minlvl.tmp.hour.unique():
+        tmpdata = pir_minlvl.tmp.query("logdate == '{}' & hour == 10 ".format("2017-04-03"))
+        for k in tmpdata.min_lvl.unique():
+            if drawtype == "flex":
+                pir_minlvl.data = tmpdata.query("min_lvl == {} ".format(k)).sort_values(by=["cnt"], ascending=[0])
+            elif drawtype == "fix":
+                pir_minlvl.data = tmpdata.query("min_lvl == {} ".format(k)).sort_values(by=["zoneid"], ascending=[0])
+
+            pir_minlvl.draw_pir_layout(drawtype=drawtype)
